@@ -11,6 +11,7 @@ import CoreMotion
 // MARK: - Color Constants
 struct NeonColors {
     static let cyan = Color(red: 0.0, green: 1.0, blue: 1.0)
+    static let blue = Color(red: 0.1, green: 0.7, blue: 1.0)
     static let magenta = Color(red: 1.0, green: 0.0, blue: 1.0)
     static let purple = Color(red: 0.5, green: 0.0, blue: 1.0)
     static let pink = Color(red: 1.0, green: 0.4, blue: 0.8)
@@ -29,13 +30,17 @@ struct TrailPoint: Identifiable {
 struct AdjustedAccelerometerData {
     let acceleration: CMAcceleration
     let timestamp: TimeInterval
-    
-    init(from data: CMAccelerometerData, offset: CMAcceleration) {
-        self.acceleration = CMAcceleration(
-            x: data.acceleration.x - offset.x,
-            y: data.acceleration.y - offset.y,
-            z: data.acceleration.z - offset.z
-        )
+
+    init(from data: CMAccelerometerData, offset: CMAcceleration, smoothed: CMAcceleration? = nil) {
+        if let smoothed = smoothed {
+            self.acceleration = smoothed
+        } else {
+            self.acceleration = CMAcceleration(
+                x: data.acceleration.x - offset.x,
+                y: data.acceleration.y - offset.y,
+                z: data.acceleration.z - offset.z
+            )
+        }
         self.timestamp = data.timestamp
     }
 }
@@ -51,9 +56,13 @@ class MotionManager: ObservableObject {
     @Published var accelerometerData: AdjustedAccelerometerData?
     @Published var trailPoints: [TrailPoint] = []
     @Published var sensorState: SensorState = .stopped
-    private let maxTrailPoints = 50
-    private let trailTimeLimit: TimeInterval = 5.0
+    private let maxTrailPoints = 200
+    let trailTimeLimit: TimeInterval = 3.5
     private var calibrationOffset = CMAcceleration(x: 0, y: 0, z: 0)
+
+    // Smoothing filter properties
+    private var previousSmoothedAcceleration = CMAcceleration(x: 0, y: 0, z: 0)
+    private let smoothingFactor: Double = 0.15  // Lower values = more smoothing
     
     // Attitude-based angle tracking with gyroscope fusion
     @Published var currentPitch: Double = 0.0
@@ -67,6 +76,18 @@ class MotionManager: ObservableObject {
     
     func radiansToDegrees(_ radians: Double) -> Double {
         return radians * Self.radiansToDegreesMultiplier
+    }
+
+    private func applySmoothingFilter(to newAcceleration: CMAcceleration) -> CMAcceleration {
+        // Low-pass filter (exponential moving average)
+        let smoothedX = previousSmoothedAcceleration.x + smoothingFactor * (newAcceleration.x - previousSmoothedAcceleration.x)
+        let smoothedY = previousSmoothedAcceleration.y + smoothingFactor * (newAcceleration.y - previousSmoothedAcceleration.y)
+        let smoothedZ = previousSmoothedAcceleration.z + smoothingFactor * (newAcceleration.z - previousSmoothedAcceleration.z)
+
+        let smoothedAcceleration = CMAcceleration(x: smoothedX, y: smoothedY, z: smoothedZ)
+        previousSmoothedAcceleration = smoothedAcceleration
+
+        return smoothedAcceleration
     }
     
     func calculatePitchAngleFromQuaternion(_ quaternion: CMQuaternion) -> Double {
@@ -157,14 +178,28 @@ class MotionManager: ObservableObject {
         currentRoll = 0.0
         accelerometerData = nil
         trailPoints.removeAll()
+
+        // Reset smoothing filter
+        previousSmoothedAcceleration = CMAcceleration(x: 0, y: 0, z: 0)
         
         // Start accelerometer updates for trail visualization
         motion.accelerometerUpdateInterval = 0.02
         motion.startAccelerometerUpdates(to: .main) { [weak self] data, error in
             guard let self = self, let data = data else { return }
-            
-            let adjustedData = AdjustedAccelerometerData(from: data, offset: self.calibrationOffset)
-            
+
+            // Apply calibration offset first
+            let offsetAdjustedAcceleration = CMAcceleration(
+                x: data.acceleration.x - self.calibrationOffset.x,
+                y: data.acceleration.y - self.calibrationOffset.y,
+                z: data.acceleration.z - self.calibrationOffset.z
+            )
+
+            // Apply smoothing filter
+            let smoothedAcceleration = self.applySmoothingFilter(to: offsetAdjustedAcceleration)
+
+            // Create adjusted data with smoothed values
+            let adjustedData = AdjustedAccelerometerData(from: data, offset: self.calibrationOffset, smoothed: smoothedAcceleration)
+
             self.accelerometerData = adjustedData
             self.updateTrail(x: adjustedData.acceleration.x, y: adjustedData.acceleration.y)
         }
@@ -186,6 +221,9 @@ class MotionManager: ObservableObject {
         currentPitch = 0.0
         currentRoll = 0.0
         lastGyroTimestamp = 0
+
+        // Reset smoothing filter
+        previousSmoothedAcceleration = CMAcceleration(x: 0, y: 0, z: 0)
     }
     
     func calibrateSensor() {
@@ -240,6 +278,9 @@ class MotionManager: ObservableObject {
                 self.currentPitch = 0.0
                 self.currentRoll = 0.0
                 self.lastGyroTimestamp = 0
+
+                // Reset smoothing filter
+                self.previousSmoothedAcceleration = CMAcceleration(x: 0, y: 0, z: 0)
                 
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.startSensor()
@@ -251,13 +292,16 @@ class MotionManager: ObservableObject {
     private func updateTrail(x: Double, y: Double) {
         let newPoint = TrailPoint(x: x, y: y, timestamp: Date())
         trailPoints.append(newPoint)
-        
-        if trailPoints.count > maxTrailPoints {
-            trailPoints.removeFirst()
-        }
-        
+
+        // More aggressive cleanup to maintain smooth performance
         let cutoffTime = Date().addingTimeInterval(-trailTimeLimit)
         trailPoints.removeAll { $0.timestamp < cutoffTime }
+
+        // Ensure we don't exceed max points (for performance)
+        if trailPoints.count > maxTrailPoints {
+            let pointsToRemove = trailPoints.count - maxTrailPoints
+            trailPoints.removeFirst(pointsToRemove)
+        }
     }
 }
 
@@ -266,6 +310,7 @@ struct BullseyeAccelerometerGauge: View {
     let y: Double
     let z: Double
     let trailPoints: [TrailPoint]
+    let trailTimeLimit: TimeInterval
     
     private let gaugeSize: CGFloat = 320
     private let maxRange: Double = 1.5
@@ -323,28 +368,81 @@ struct BullseyeAccelerometerGauge: View {
                 path.move(to: CGPoint(x: margin, y: gaugeRadius))
                 path.addLine(to: CGPoint(x: gaugeSize - margin, y: gaugeRadius))
             }
-            .stroke(NeonColors.cyan, lineWidth: 3)
+            .stroke(NeonColors.blue, lineWidth: 3)
             
-            ForEach(Array(trailPoints.enumerated()), id: \.element.id) { index, point in
-                let opacity = Double(index) / Double(max(trailPoints.count - 1, 1))
-                let size = 4.0 + (opacity * 8.0)
-                
-                Circle()
-                    .fill(
-                        RadialGradient(
-                            colors: [NeonColors.cyan, NeonColors.purple],
-                            center: .center,
-                            startRadius: 0,
-                            endRadius: size/2
+            // Continuous trail path with multiple segments for blur effect
+            if trailPoints.count >= 2 {
+                ForEach(1..<min(6, trailPoints.count), id: \.self) { layer in
+                    Path { path in
+                        let segmentSize = max(1, trailPoints.count / 6)
+                        let startIndex = max(0, trailPoints.count - layer * segmentSize)
+                        let endIndex = trailPoints.count - (layer - 1) * segmentSize
+
+                        if startIndex < endIndex {
+                            let firstPoint = trailPoints[startIndex]
+                            path.move(to: CGPoint(
+                                x: gaugeRadius + clampPosition(firstPoint.x),
+                                y: gaugeRadius + clampPosition(-firstPoint.y)
+                            ))
+
+                            for i in (startIndex + 1)..<min(endIndex, trailPoints.count) {
+                                let point = trailPoints[i]
+                                path.addLine(to: CGPoint(
+                                    x: gaugeRadius + clampPosition(point.x),
+                                    y: gaugeRadius + clampPosition(-point.y)
+                                ))
+                            }
+                        }
+                    }
+                    .stroke(
+                        LinearGradient(
+                            colors: [
+                                NeonColors.purple.opacity(0.7 - Double(layer) * 0.1),
+                                NeonColors.magenta.opacity(0.8 - Double(layer) * 0.1),
+                                NeonColors.cyan.opacity(0.5 - Double(layer) * 0.1)
+                            ],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        ),
+                        style: StrokeStyle(
+                            lineWidth: CGFloat(12 - layer),
+                            lineCap: .round,
+                            lineJoin: .round
                         )
                     )
-                    .frame(width: size, height: size)
-                    .opacity(opacity)
-                    .shadow(color: NeonColors.cyan, radius: 2)
-                    .offset(
-                        x: clampPosition(point.x),
-                        y: clampPosition(-point.y)
-                    )
+                    .blur(radius: CGFloat(layer * 2) * 0.75)
+                    .opacity(0.9 - Double(layer) * 0.15)
+                }
+
+                // Most recent trail points as individual circles for definition
+                ForEach(Array(trailPoints.suffix(20).enumerated()), id: \.element.id) { index, point in
+                    let totalPoints = min(20, trailPoints.count)
+                    let ageBasedOpacity = Double(index) / Double(max(totalPoints - 1, 1))
+                    let timeBasedOpacity = max(0.0, 1.0 - (Date().timeIntervalSince(point.timestamp) / trailTimeLimit))
+                    let combinedOpacity = min(ageBasedOpacity, timeBasedOpacity) * 0.8
+                    let size = 3.0 + (combinedOpacity * 5.0)
+
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [
+                                    NeonColors.white.opacity(combinedOpacity),
+                                    NeonColors.cyan.opacity(combinedOpacity * 0.8),
+                                    NeonColors.purple.opacity(combinedOpacity * 0.6)
+                                ],
+                                center: .center,
+                                startRadius: 0,
+                                endRadius: size/2
+                            )
+                        )
+                        .frame(width: size, height: size)
+                        .opacity(combinedOpacity)
+                        .shadow(color: NeonColors.cyan.opacity(combinedOpacity), radius: 1.5)
+                        .offset(
+                            x: clampPosition(point.x),
+                            y: clampPosition(-point.y)
+                        )
+                }
             }
             
             Circle()
@@ -631,12 +729,14 @@ struct ContentView: View {
                             x: data.acceleration.x,
                             y: data.acceleration.y,
                             z: data.acceleration.z,
-                            trailPoints: motionManager.trailPoints
+                            trailPoints: motionManager.trailPoints,
+                            trailTimeLimit: motionManager.trailTimeLimit
                         )
                     } else {
                         BullseyeAccelerometerGauge(
                             x: 0, y: 0, z: 1,
-                            trailPoints: []
+                            trailPoints: [],
+                            trailTimeLimit: motionManager.trailTimeLimit
                         )
                         .opacity(0.5)
                     }
