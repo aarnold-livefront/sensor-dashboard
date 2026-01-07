@@ -774,6 +774,19 @@ struct ContentView: View {
                 )
             )
         }
+        .onChange(of: motionManager.sensorState) { newState in
+            // Keep screen awake while sensors are active
+            let shouldStayAwake = (newState == .running || newState == .calibrating)
+            UIApplication.shared.isIdleTimerDisabled = shouldStayAwake
+        }
+        .onAppear {
+            // Ensure idle timer is enabled when view appears
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
+        .onDisappear {
+            // Re-enable idle timer when view disappears
+            UIApplication.shared.isIdleTimerDisabled = false
+        }
         .ignoresSafeArea()
     }
 }
