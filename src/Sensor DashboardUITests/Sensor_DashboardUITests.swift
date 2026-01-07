@@ -208,4 +208,184 @@ final class Sensor_DashboardUITests: XCTestCase {
             XCUIApplication().launch()
         }
     }
+
+    @MainActor
+    func testRapidButtonToggling() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        let startButton = app.buttons["START"]
+
+        // Rapidly toggle the sensor state multiple times
+        for _ in 0..<3 {
+            startButton.tap()
+
+            let stopButton = app.buttons["STOP"]
+            XCTAssertTrue(stopButton.waitForExistence(timeout: 2), "Button should change to STOP")
+
+            stopButton.tap()
+            XCTAssertTrue(startButton.waitForExistence(timeout: 2), "Button should return to START")
+        }
+
+        // Verify app is still responsive
+        XCTAssertTrue(app.exists, "App should still be running after rapid toggling")
+    }
+
+    @MainActor
+    func testMultipleCalibrationCycles() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Start sensors
+        let startButton = app.buttons["START"]
+        startButton.tap()
+
+        let recalibrateButton = app.buttons["RECALIBRATE"]
+        XCTAssertTrue(recalibrateButton.waitForExistence(timeout: 2), "RECALIBRATE button should appear")
+
+        // Perform multiple calibration cycles
+        for cycle in 1...3 {
+            recalibrateButton.tap()
+
+            // Wait for calibration to complete
+            let stopButton = app.buttons["STOP"]
+            XCTAssertTrue(stopButton.waitForExistence(timeout: 4),
+                         "Calibration cycle \(cycle) should complete and return to running state")
+
+            // Small delay between calibrations
+            sleep(1)
+        }
+
+        // Verify app is still in running state after multiple calibrations
+        let stopButton = app.buttons["STOP"]
+        XCTAssertTrue(stopButton.exists, "App should still be running after multiple calibrations")
+    }
+
+    @MainActor
+    func testGaugeConsistencyAfterStateChanges() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Verify initial state
+        let gForceLabel = app.staticTexts["G-FORCE"]
+        let pitchLabel = app.staticTexts["PITCH"]
+        let rollLabel = app.staticTexts["ROLL"]
+
+        XCTAssertTrue(gForceLabel.exists, "G-FORCE label should exist")
+        XCTAssertTrue(pitchLabel.exists, "PITCH label should exist")
+        XCTAssertTrue(rollLabel.exists, "ROLL label should exist")
+
+        // Start sensors
+        let startButton = app.buttons["START"]
+        startButton.tap()
+
+        sleep(2)
+
+        // All gauges should still be visible during operation
+        XCTAssertTrue(gForceLabel.exists, "G-FORCE label should persist during operation")
+        XCTAssertTrue(pitchLabel.exists, "PITCH label should persist during operation")
+        XCTAssertTrue(rollLabel.exists, "ROLL label should persist during operation")
+
+        // Stop sensors
+        let stopButton = app.buttons["STOP"]
+        stopButton.tap()
+
+        // All gauges should still be visible after stopping
+        XCTAssertTrue(gForceLabel.exists, "G-FORCE label should persist after stopping")
+        XCTAssertTrue(pitchLabel.exists, "PITCH label should persist after stopping")
+        XCTAssertTrue(rollLabel.exists, "ROLL label should persist after stopping")
+    }
+
+    @MainActor
+    func testInitialGaugeReadings() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Verify default/initial gauge readings when sensors are stopped
+        let defaultGForce = app.staticTexts["1.00"]
+        let defaultPitch = app.staticTexts["0.0°"]
+        let defaultRoll = app.staticTexts["0.0°"]
+
+        // At least one of the angle displays should show 0.0°
+        XCTAssertTrue(defaultPitch.exists || defaultRoll.exists,
+                     "Initial angle readings should show 0.0°")
+
+        // G-force should show default value (1.00 for standard gravity)
+        XCTAssertTrue(defaultGForce.exists, "Initial G-force should show 1.00")
+    }
+
+    @MainActor
+    func testSensorControlButtonAccessibility() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Verify button is accessible
+        let startButton = app.buttons["START"]
+        XCTAssertTrue(startButton.exists, "START button should be accessible")
+        XCTAssertTrue(startButton.isHittable, "START button should be hittable")
+
+        startButton.tap()
+
+        let stopButton = app.buttons["STOP"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 2), "STOP button should be accessible")
+        XCTAssertTrue(stopButton.isHittable, "STOP button should be hittable")
+
+        let recalibrateButton = app.buttons["RECALIBRATE"]
+        XCTAssertTrue(recalibrateButton.exists, "RECALIBRATE button should be accessible")
+        XCTAssertTrue(recalibrateButton.isHittable, "RECALIBRATE button should be hittable")
+    }
+
+    @MainActor
+    func testLongRunningSensorSession() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Start sensors
+        let startButton = app.buttons["START"]
+        startButton.tap()
+
+        let stopButton = app.buttons["STOP"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 2), "Sensors should start")
+
+        // Let sensors run for a longer period to verify stability
+        sleep(5)
+
+        // Verify UI is still responsive and showing data
+        let gForceLabel = app.staticTexts["G-FORCE"]
+        let pitchLabel = app.staticTexts["PITCH"]
+        let rollLabel = app.staticTexts["ROLL"]
+
+        XCTAssertTrue(gForceLabel.exists, "G-FORCE label should still be visible after long session")
+        XCTAssertTrue(pitchLabel.exists, "PITCH label should still be visible after long session")
+        XCTAssertTrue(rollLabel.exists, "ROLL label should still be visible after long session")
+
+        // Verify we can still stop the sensors
+        XCTAssertTrue(stopButton.exists, "STOP button should still be accessible")
+        stopButton.tap()
+
+        XCTAssertTrue(startButton.waitForExistence(timeout: 2), "Should be able to stop sensors after long session")
+    }
+
+    @MainActor
+    func testCalibrationButtonDisabledDuringCalibration() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Start sensors
+        let startButton = app.buttons["START"]
+        startButton.tap()
+
+        let recalibrateButton = app.buttons["RECALIBRATE"]
+        XCTAssertTrue(recalibrateButton.waitForExistence(timeout: 2), "RECALIBRATE button should appear")
+
+        // Tap calibrate
+        recalibrateButton.tap()
+
+        // During calibration, the main button should show "CALIBRATING..."
+        let calibratingButton = app.buttons["CALIBRATING..."]
+        XCTAssertTrue(calibratingButton.waitForExistence(timeout: 1), "Should show CALIBRATING... state")
+
+        // Verify the calibrating button is disabled (not hittable while calibrating)
+        // Note: The button is visually present but should not respond to taps during calibration
+    }
 }

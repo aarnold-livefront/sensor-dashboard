@@ -22,12 +22,54 @@ final class Sensor_DashboardUITestsLaunchTests: XCTestCase {
         let app = XCUIApplication()
         app.launch()
 
-        // Insert steps here to perform after app launch but before taking a screenshot,
-        // such as logging into a test account or navigating somewhere in the app
+        // Verify all main UI elements are present on launch
+        XCTAssertTrue(app.buttons["START"].exists, "START button should be visible on launch")
+        XCTAssertTrue(app.staticTexts["G-FORCE"].exists, "G-FORCE label should be visible on launch")
+        XCTAssertTrue(app.staticTexts["PITCH"].exists, "PITCH label should be visible on launch")
+        XCTAssertTrue(app.staticTexts["ROLL"].exists, "ROLL label should be visible on launch")
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = "Launch Screen"
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    @MainActor
+    func testLaunchWithSensorStart() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Start sensors and take screenshot
+        app.buttons["START"].tap()
+
+        // Wait for sensors to initialize
+        let stopButton = app.buttons["STOP"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 2), "Sensors should start")
+
+        sleep(1)
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Sensors Running Screen"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
+    @MainActor
+    func testLaunchWithCalibration() throws {
+        let app = XCUIApplication()
+        app.launch()
+
+        // Start sensors (which triggers calibration)
+        app.buttons["START"].tap()
+
+        // Capture screenshot during calibration/initial state
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Calibration Screen"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+
+        // Wait for calibration to complete
+        let stopButton = app.buttons["STOP"]
+        XCTAssertTrue(stopButton.waitForExistence(timeout: 3), "Calibration should complete")
     }
 }
