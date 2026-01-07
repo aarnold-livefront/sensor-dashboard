@@ -281,28 +281,27 @@ struct SensorControlButtonTests {
 
     @Test("Button displays correct state for stopped")
     func buttonStoppedState() {
-        var startCalled = false
         let button = SensorControlButton(
             sensorState: .stopped,
-            onStart: { startCalled = true },
+            onStart: {},
             onStop: {},
             onCalibrate: {}
         )
 
-        // Verify we can create the button
+        // Verify we can create the button with correct state
         #expect(button.sensorState == .stopped)
     }
 
     @Test("Button displays correct state for running")
     func buttonRunningState() {
-        var stopCalled = false
         let button = SensorControlButton(
             sensorState: .running,
             onStart: {},
-            onStop: { stopCalled = true },
+            onStop: {},
             onCalibrate: {}
         )
 
+        // Verify we can create the button with correct state
         #expect(button.sensorState == .running)
     }
 
